@@ -1,0 +1,35 @@
+name: ItemLock
+version: '${version}'
+
+main: ym.untitled.ItemLockPlugin
+api-version: '1.16'
+
+authors: [ ymxc ]
+description: Soul-bound item lock plugin for Spigot, Paper and Folia.
+folia-supported: true
+
+commands:
+  itemlock:
+    description: ItemLock soul binding command.
+    usage: /itemlock <bind|unbind|scroll|reload>
+    aliases: [ ilock ]
+
+permissions:
+  itemlock.command:
+    description: Allows using /itemlock.
+    default: op
+  itemlock.bind:
+    description: Allows binding the item in hand.
+    default: op
+  itemlock.unbind:
+    description: Allows unbinding the item in hand.
+    default: op
+  itemlock.scroll:
+    description: Allows giving bind and unbind scrolls.
+    default: op
+  itemlock.reload:
+    description: Allows reloading ItemLock config.
+    default: op
+  itemlock.bypass:
+    description: Bypass foreign bound item restrictions.
+    default: op
