@@ -1,7 +1,12 @@
-package ym.untitled
+package ym.itemlock.service
 
 import net.md_5.bungee.api.ChatMessageType
 import net.md_5.bungee.api.chat.TextComponent
+import ym.itemlock.bootstrap.ItemLockPlugin
+import ym.itemlock.config.ItemLockConfig
+import ym.itemlock.lang.ItemLockLang
+import ym.itemlock.model.ScrollType
+import ym.itemlock.storage.ItemLockStorage
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.Sound
@@ -24,6 +29,10 @@ class ItemLockManager(
     private val keyBoundAt = NamespacedKey(plugin, "bound_at")
     private val keyScroll = NamespacedKey(plugin, "unbind_scroll")
     private val keyScrollType = NamespacedKey(plugin, "scroll_type")
+    private val keyPendingBind = NamespacedKey(plugin, "pending_bind")
+    private val keyPendingId = NamespacedKey(plugin, "pending_id")
+    private val keyPendingOwnerUuid = NamespacedKey(plugin, "pending_owner_uuid")
+    private val keyPendingOwnerName = NamespacedKey(plugin, "pending_owner_name")
 
     fun bindingOf(item: ItemStack?): BindingInfo? {
         if (isAir(item)) {
@@ -63,6 +72,7 @@ class ItemLockManager(
 
         val meta = item!!.itemMeta ?: return OperationResult.NO_ITEM
         val container = meta.persistentDataContainer
+        clearPendingKeys(container)
         val itemId = current?.itemId ?: UUID.randomUUID().toString()
         val boundAt = current?.boundAt?.takeIf { it > 0L } ?: System.currentTimeMillis()
         container.set(keyItemId, PersistentDataType.STRING, itemId)
@@ -78,31 +88,109 @@ class ItemLockManager(
         return OperationResult.SUCCESS
     }
 
-    fun unbindItem(item: ItemStack?): OperationResult {
-        val binding = bindingOf(item) ?: return OperationResult.NOT_BOUND
-        val settings = config.settings()
-        if (item!!.type in settings.unbind.deniedMaterials) {
-            return OperationResult.DENIED
+    fun markPendingBind(item: ItemStack?, owner: Player? = null): OperationResult {
+        if (isAir(item)) {
+            return OperationResult.NO_ITEM
         }
-
-        val meta = item.itemMeta ?: return OperationResult.NO_ITEM
+        if (bindingOf(item) != null) {
+            return OperationResult.ALREADY_BOUND
+        }
+        val current = pendingBindingOf(item)
+        if (current != null) {
+            if (
+                owner != null &&
+                current.ownerUuid != null &&
+                current.ownerUuid != owner.uniqueId &&
+                !hasBypass(owner)
+            ) {
+                return OperationResult.DENIED
+            }
+            if (owner != null && current.ownerUuid == null) {
+                val meta = item!!.itemMeta ?: return OperationResult.NO_ITEM
+                ensurePendingId(meta)
+                writePendingOwner(meta, owner)
+                item.itemMeta = meta
+                return OperationResult.SUCCESS
+            }
+            return OperationResult.ALREADY_BOUND
+        }
+        val meta = item!!.itemMeta ?: return OperationResult.NO_ITEM
         val container = meta.persistentDataContainer
-        container.remove(keyItemId)
-        container.remove(keyOwnerUuid)
-        container.remove(keyOwnerName)
-        container.remove(keyBoundAt)
-        meta.lore = removeBindingLore(meta.lore, settings)
+        container.set(keyPendingBind, PersistentDataType.BYTE, 1.toByte())
+        ensurePendingId(meta)
+        if (owner != null) {
+            writePendingOwner(meta, owner)
+        } else {
+            container.remove(keyPendingOwnerUuid)
+            container.remove(keyPendingOwnerName)
+        }
+        meta.lore = pendingLore(meta.lore, config.settings())
         item.itemMeta = meta
-        storage.recordUnbind(binding.itemId)
         return OperationResult.SUCCESS
     }
 
-    fun bindIfEligible(item: ItemStack?, owner: Player, sendMessage: Boolean = false): Boolean {
-        val settings = config.settings()
-        if (!settings.binding.automatic || !shouldAutoBind(item, settings)) {
+    fun pendingBindingOf(item: ItemStack?): PendingBindingInfo? {
+        if (!isPendingBind(item)) {
+            return null
+        }
+        val meta = item!!.itemMeta ?: return null
+        val container = meta.persistentDataContainer
+        val ownerText = container.get(keyPendingOwnerUuid, PersistentDataType.STRING)
+        val ownerUuid = ownerText?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
+        return PendingBindingInfo(
+            pendingId = container.get(keyPendingId, PersistentDataType.STRING),
+            ownerUuid = ownerUuid,
+            ownerName = container.get(keyPendingOwnerName, PersistentDataType.STRING) ?: "Unknown"
+        )
+    }
+
+    fun isPendingBind(item: ItemStack?): Boolean {
+        if (isAir(item)) {
             return false
         }
+        val meta = item!!.itemMeta ?: return false
+        val marker = meta.persistentDataContainer.get(keyPendingBind, PersistentDataType.BYTE)
+        return marker?.toInt() == 1
+    }
+
+    fun isBoundOrPending(item: ItemStack?): Boolean {
+        return bindingOf(item) != null || isPendingBind(item)
+    }
+
+    fun trackingKey(item: ItemStack?): String? {
+        val binding = bindingOf(item)
+        if (binding != null) {
+            return "bound:${binding.itemId}"
+        }
+        val pending = pendingBindingOf(item)
+        val pendingId = pending?.pendingId?.takeIf { it.isNotBlank() } ?: return null
+        return "pending:$pendingId"
+    }
+
+    fun foreignOwnerName(item: ItemStack?, player: Player): String? {
+        val binding = bindingOf(item)
+        if (binding != null && binding.ownerUuid != player.uniqueId) {
+            return binding.ownerName
+        }
+        val pending = pendingBindingOf(item)
+        if (pending?.ownerUuid != null && pending.ownerUuid != player.uniqueId) {
+            return pending.ownerName
+        }
+        return null
+    }
+
+    fun bindPendingOnUse(item: ItemStack?, owner: Player, action: BindAction, sendMessage: Boolean = true): Boolean {
         if (bindingOf(item) != null) {
+            return false
+        }
+        if (!canBindOnAction(item, action)) {
+            return false
+        }
+        val pending = pendingBindingOf(item)
+        if (pending?.ownerUuid != null && pending.ownerUuid != owner.uniqueId && !hasBypass(owner)) {
+            return false
+        }
+        if (pending == null && !isAutomaticEligibleForAction(item, action)) {
             return false
         }
         val result = bindItem(item, owner)
@@ -112,7 +200,47 @@ class ItemLockManager(
         return result == OperationResult.SUCCESS
     }
 
-    fun scanInventoryForAutoBind(player: Player): Int {
+    fun unbindItem(item: ItemStack?): OperationResult {
+        val binding = bindingOf(item)
+        val pending = pendingBindingOf(item)
+        if (binding == null && pending == null) {
+            return OperationResult.NOT_BOUND
+        }
+        val settings = config.settings()
+        if (binding != null && item!!.type in settings.unbind.deniedMaterials) {
+            return OperationResult.DENIED
+        }
+
+        val meta = item!!.itemMeta ?: return OperationResult.NO_ITEM
+        val container = meta.persistentDataContainer
+        container.remove(keyItemId)
+        container.remove(keyOwnerUuid)
+        container.remove(keyOwnerName)
+        container.remove(keyBoundAt)
+        clearPendingKeys(container)
+        meta.lore = removeBindingLore(meta.lore, settings)
+        item.itemMeta = meta
+        if (binding != null) {
+            storage.recordUnbind(binding.itemId)
+        }
+        return OperationResult.SUCCESS
+    }
+
+    fun prepareAutoBindIfEligible(item: ItemStack?, owner: Player): Boolean {
+        val pending = pendingBindingOf(item)
+        if (pending != null) {
+            return pending.ownerUuid == null && markPendingBind(item, owner) == OperationResult.SUCCESS
+        }
+        if (!isEligibleForAutoBind(item)) {
+            return false
+        }
+        if (bindingOf(item) != null) {
+            return false
+        }
+        return markPendingBind(item, owner) == OperationResult.SUCCESS
+    }
+
+    fun scanInventoryForPendingBind(player: Player): Int {
         val settings = config.settings()
         if (!settings.binding.automatic) {
             return 0
@@ -120,16 +248,16 @@ class ItemLockManager(
         var changed = 0
         val inventory = player.inventory
         for (item in inventory.contents) {
-            if (bindIfEligible(item, player)) {
+            if (prepareAutoBindIfEligible(item, player)) {
                 changed++
             }
         }
         for (item in inventory.armorContents) {
-            if (bindIfEligible(item, player)) {
+            if (prepareAutoBindIfEligible(item, player)) {
                 changed++
             }
         }
-        if (bindIfEligible(inventory.itemInOffHand, player)) {
+        if (prepareAutoBindIfEligible(inventory.itemInOffHand, player)) {
             changed++
         }
         return changed
@@ -222,6 +350,28 @@ class ItemLockManager(
         return raw.replace("{owner}", ownerName)
     }
 
+    private fun isEligibleForAutoBind(item: ItemStack?): Boolean {
+        val settings = config.settings()
+        return settings.binding.automatic && shouldAutoBind(item, settings)
+    }
+
+    private fun isAutomaticEligibleForAction(item: ItemStack?, action: BindAction): Boolean {
+        return isEligibleForAutoBind(item) && canBindOnAction(item, action)
+    }
+
+    private fun canBindOnAction(item: ItemStack?, action: BindAction): Boolean {
+        if (isAir(item)) {
+            return false
+        }
+        val name = item!!.type.name.uppercase(Locale.ROOT)
+        return when (action) {
+            BindAction.BLOCK_BREAK -> isBlockBreakTool(name)
+            BindAction.ARMOR_EQUIP -> isArmor(name)
+            BindAction.KILL -> isWeapon(name)
+            BindAction.INTERACT -> isInteractTool(name) || isMiscInteractionItem(name)
+        }
+    }
+
     private fun shouldAutoBind(item: ItemStack?, settings: ItemLockConfig.Settings): Boolean {
         if (isAir(item)) {
             return false
@@ -287,9 +437,33 @@ class ItemLockManager(
             name == "FLINT_AND_STEEL"
     }
 
+    private fun isBlockBreakTool(name: String): Boolean {
+        return name.endsWith("_PICKAXE") ||
+            name.endsWith("_AXE") ||
+            name.endsWith("_SHOVEL") ||
+            name.endsWith("_HOE") ||
+            name == "SHEARS"
+    }
+
+    private fun isInteractTool(name: String): Boolean {
+        return name == "FISHING_ROD" ||
+            name == "FLINT_AND_STEEL" ||
+            name.endsWith("_HOE")
+    }
+
+    private fun isMiscInteractionItem(name: String): Boolean {
+        return !isWeapon(name) && !isArmor(name) && !isBlockBreakTool(name)
+    }
+
     private fun boundLore(oldLore: List<String>?, ownerName: String, settings: ItemLockConfig.Settings): List<String> {
         val lore = removeBindingLore(oldLore, settings).toMutableList()
         lore.add(lang.text().binding.loreFormat.replace("{player}", ownerName))
+        return lore
+    }
+
+    private fun pendingLore(oldLore: List<String>?, settings: ItemLockConfig.Settings): List<String> {
+        val lore = removeBindingLore(oldLore, settings).toMutableList()
+        lore.add(lang.text().binding.pendingLoreFormat)
         return lore
     }
 
@@ -297,8 +471,31 @@ class ItemLockManager(
         if (oldLore.isNullOrEmpty()) {
             return emptyList()
         }
-        val marker = lang.text().binding.loreMarker
-        return oldLore.filterNot { line -> line.contains(marker, ignoreCase = true) }
+        val text = lang.text().binding
+        return oldLore.filterNot { line ->
+            line.contains(text.loreMarker, ignoreCase = true) ||
+                line.contains(text.pendingLoreMarker, ignoreCase = true)
+        }
+    }
+
+    private fun clearPendingKeys(container: org.bukkit.persistence.PersistentDataContainer) {
+        container.remove(keyPendingBind)
+        container.remove(keyPendingId)
+        container.remove(keyPendingOwnerUuid)
+        container.remove(keyPendingOwnerName)
+    }
+
+    private fun writePendingOwner(meta: org.bukkit.inventory.meta.ItemMeta, owner: Player) {
+        val container = meta.persistentDataContainer
+        container.set(keyPendingOwnerUuid, PersistentDataType.STRING, owner.uniqueId.toString())
+        container.set(keyPendingOwnerName, PersistentDataType.STRING, owner.name)
+    }
+
+    private fun ensurePendingId(meta: org.bukkit.inventory.meta.ItemMeta) {
+        val container = meta.persistentDataContainer
+        if (container.get(keyPendingId, PersistentDataType.STRING).isNullOrBlank()) {
+            container.set(keyPendingId, PersistentDataType.STRING, UUID.randomUUID().toString())
+        }
     }
 
     private fun isAir(item: ItemStack?): Boolean {
@@ -312,11 +509,24 @@ class ItemLockManager(
         val boundAt: Long
     )
 
+    data class PendingBindingInfo(
+        val pendingId: String?,
+        val ownerUuid: UUID?,
+        val ownerName: String
+    )
+
     enum class OperationResult {
         SUCCESS,
         NO_ITEM,
         ALREADY_BOUND,
         NOT_BOUND,
         DENIED
+    }
+
+    enum class BindAction {
+        BLOCK_BREAK,
+        ARMOR_EQUIP,
+        KILL,
+        INTERACT
     }
 }

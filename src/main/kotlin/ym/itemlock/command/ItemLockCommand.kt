@@ -1,5 +1,10 @@
-package ym.untitled
+package ym.itemlock.command
 
+import ym.itemlock.bootstrap.ItemLockPlugin
+import ym.itemlock.config.ItemLockConfig
+import ym.itemlock.lang.ItemLockLang
+import ym.itemlock.model.ScrollType
+import ym.itemlock.service.ItemLockManager
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.command.Command

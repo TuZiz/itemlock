@@ -1,7 +1,7 @@
 name: ItemLock
 version: '${version}'
 
-main: ym.untitled.ItemLockPlugin
+main: ym.itemlock.bootstrap.ItemLockPlugin
 api-version: '1.16'
 
 authors: [ ymxc ]

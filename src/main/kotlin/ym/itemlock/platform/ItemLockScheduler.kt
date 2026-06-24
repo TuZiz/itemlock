@@ -1,4 +1,4 @@
-package ym.untitled
+package ym.itemlock.platform
 
 import org.bukkit.Bukkit
 import org.bukkit.command.CommandSender
@@ -63,6 +63,34 @@ class ItemLockScheduler(private val plugin: JavaPlugin) {
             )
         } else {
             plugin.logger.warning("Folia entity scheduler was not found for ${player.name}; running task through global scheduler.")
+            runGlobal(task)
+        }
+    }
+
+    fun runPlayerNextTick(player: Player, task: () -> Unit) {
+        if (!folia) {
+            plugin.server.scheduler.runTask(plugin, Runnable { task() })
+            return
+        }
+
+        val scheduler = player.javaClass.methods
+            .firstOrNull { it.name == "getScheduler" && it.parameterTypes.isEmpty() }
+            ?.invoke(player)
+
+        val execute = scheduler?.javaClass?.methods?.firstOrNull { method ->
+            method.name == "execute" && method.parameterTypes.size == 4
+        }
+
+        if (scheduler != null && execute != null) {
+            execute.invoke(
+                scheduler,
+                plugin,
+                Runnable { task() },
+                Runnable { },
+                1L
+            )
+        } else {
+            plugin.logger.warning("Folia entity scheduler was not found for ${player.name}; running next-tick task through global scheduler.")
             runGlobal(task)
         }
     }

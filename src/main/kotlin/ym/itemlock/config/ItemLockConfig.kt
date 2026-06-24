@@ -1,5 +1,6 @@
-package ym.untitled
+package ym.itemlock.config
 
+import ym.itemlock.bootstrap.ItemLockPlugin
 import org.bukkit.Material
 import org.bukkit.Sound
 import org.bukkit.configuration.file.YamlConfiguration
@@ -37,7 +38,7 @@ class ItemLockConfig(
 
             val settings = Settings(
                 binding = BindingSettings(
-                    automatic = config.getBoolean("binding.automatic", true),
+                    automatic = config.getBoolean("binding.automatic", false),
                     defaultTypes = config.getStringList("binding.default-types")
                         .map { normalizeToken(it) }
                         .filter { it.isNotEmpty() }
@@ -125,7 +126,7 @@ class ItemLockConfig(
             fun defaults(): Settings {
                 return Settings(
                     binding = BindingSettings(
-                        automatic = true,
+                        automatic = false,
                         defaultTypes = setOf("WEAPONS", "ARMOR", "TOOLS"),
                         explicitMaterials = emptySet(),
                         excludedMaterials = emptySet(),
@@ -192,22 +193,23 @@ class ItemLockConfig(
 # ItemLock 功能配置
 # 所有玩家可见文本请在 lang/zh_cn.yml 中修改；该文件只放功能开关、材料和声音。
 
-# 自动灵魂绑定规则。
+# 自动灵魂绑定规则。默认关闭；关闭时所有物品必须先使用绑定卷轴。
 binding:
-  # 玩家获得符合规则的物品时是否自动绑定到自己。
-  automatic: true
-  # 自动绑定的物品分类：
-  # WEAPONS = 剑、弓、弩、三叉戟
-  # ARMOR = 盔甲、鞘翅、盾牌
-  # TOOLS = 镐、斧、锹、锄、剪刀、鱼竿、打火石
+  # true 时，玩家获得符合规则的物品会先标记为待绑定；第一次对应交互后才绑定主人。
+  # false 时，不会自动标记，只有绑定卷轴能让物品进入待绑定状态。
+  automatic: false
+  # 自动绑定启用后才生效的物品分类：
+  # WEAPONS = 剑、弓、弩、三叉戟，击杀实体后绑定
+  # ARMOR = 盔甲、鞘翅、盾牌，穿戴后绑定
+  # TOOLS = 镐、斧、锹、锄、剪刀、鱼竿、打火石，破坏方块或实际交互后绑定
   # ALL = 所有非空气物品
   default-types:
     - WEAPONS
     - ARMOR
     - TOOLS
-  # 额外强制自动绑定的 Bukkit Material 名称，例如 DIAMOND_HOE。
+  # 自动绑定启用后，额外强制自动绑定的 Bukkit Material 名称，例如 DIAMOND_HOE。
   explicit-materials: []
-  # 从自动绑定中排除的 Bukkit Material 名称，优先级高于 default-types 和 explicit-materials。
+  # 自动绑定启用后，从自动绑定中排除的 Bukkit Material 名称，优先级高于 default-types 和 explicit-materials。
   excluded-materials: []
   # true 时，管理员重复绑定已绑定物品会覆盖原所有者；false 时保留原绑定。
   bind-already-bound-items: false

@@ -1,5 +1,6 @@
-package ym.untitled
+package ym.itemlock.storage
 
+import ym.itemlock.bootstrap.ItemLockPlugin
 import org.bukkit.configuration.file.YamlConfiguration
 import java.nio.file.Files
 import java.util.UUID

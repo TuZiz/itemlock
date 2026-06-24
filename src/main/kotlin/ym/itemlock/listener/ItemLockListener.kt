@@ -1,19 +1,32 @@
-package ym.untitled
+package ym.itemlock.listener
 
+import ym.itemlock.bootstrap.ItemLockPlugin
+import ym.itemlock.config.ItemLockConfig
+import ym.itemlock.lang.ItemLockLang
+import ym.itemlock.model.ScrollType
+import ym.itemlock.service.ItemLockManager
 import org.bukkit.Material
+import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
+import org.bukkit.entity.Projectile
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
+import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.entity.EntityDamageByEntityEvent
+import org.bukkit.event.entity.EntityDeathEvent
 import org.bukkit.event.entity.EntityPickupItemEvent
+import org.bukkit.event.entity.EntityShootBowEvent
 import org.bukkit.event.entity.PlayerDeathEvent
+import org.bukkit.event.entity.ProjectileLaunchEvent
 import org.bukkit.event.inventory.ClickType
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.inventory.InventoryDragEvent
 import org.bukkit.event.inventory.InventoryMoveItemEvent
+import org.bukkit.event.inventory.InventoryType
+import org.bukkit.event.inventory.InventoryType.SlotType
 import org.bukkit.event.player.PlayerDropItemEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.player.PlayerItemHeldEvent
@@ -32,18 +45,20 @@ class ItemLockListener(
 ) : Listener {
 
     private val deathKeptItems = ConcurrentHashMap<UUID, MutableList<ItemStack>>()
+    private val lastKillWeapons = ConcurrentHashMap<UUID, WeaponHit>()
+    private val projectileWeapons = ConcurrentHashMap<UUID, WeaponHit>()
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onPickup(event: EntityPickupItemEvent) {
         val player = event.entity as? Player ?: return
         val item = event.item.itemStack
-        val binding = manager.bindingOf(item)
-        if (binding != null && !manager.isOwnedBy(item, player) && !manager.hasBypass(player)) {
+        val foreignOwner = manager.foreignOwnerName(item, player)
+        if (foreignOwner != null && !manager.hasBypass(player)) {
             event.isCancelled = true
-            deny(player, manager.replaceOwner(messages().cannotTake, binding.ownerName))
+            deny(player, manager.replaceOwner(messages().cannotTake, foreignOwner))
             return
         }
-        manager.bindIfEligible(item, player, sendMessage = true)
+        manager.prepareAutoBindIfEligible(item, player)
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -51,7 +66,7 @@ class ItemLockListener(
         if (!managerConfig().protection.cancelDrop) {
             return
         }
-        if (!manager.isBound(event.itemDrop.itemStack)) {
+        if (!manager.isBoundOrPending(event.itemDrop.itemStack)) {
             return
         }
         event.isCancelled = true
@@ -64,7 +79,7 @@ class ItemLockListener(
         val cursor = event.cursor
         val current = event.currentItem
 
-        if (event.rawSlot == InventoryView.OUTSIDE && manager.isBound(cursor)) {
+        if (event.rawSlot == InventoryView.OUTSIDE && manager.isBoundOrPending(cursor)) {
             event.isCancelled = true
             deny(player, messages().cannotDrop)
             return
@@ -76,7 +91,7 @@ class ItemLockListener(
             return
         }
 
-        if (isDropClick(event.click) && manager.isBound(current)) {
+        if (isDropClick(event.click) && manager.isBoundOrPending(current)) {
             event.isCancelled = true
             deny(player, messages().cannotDrop)
             return
@@ -100,6 +115,13 @@ class ItemLockListener(
         if (shouldBlockForeign(player, cursor, moving = true)) {
             event.isCancelled = true
             deny(player, messages().cannotTake)
+            return
+        }
+
+        if (mayEquipArmor(event)) {
+            plugin.runPlayerNextTick(player) {
+                bindEquippedItems(player)
+            }
         }
     }
 
@@ -121,12 +143,22 @@ class ItemLockListener(
         }
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onArmorDrag(event: InventoryDragEvent) {
+        val player = event.whoClicked as? Player ?: return
+        if (event.rawSlots.any { rawSlot -> event.view.getSlotType(rawSlot) == SlotType.ARMOR }) {
+            plugin.runPlayerNextTick(player) {
+                bindEquippedItems(player)
+            }
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onInventoryMove(event: InventoryMoveItemEvent) {
         if (!managerConfig().protection.cancelHopperMove) {
             return
         }
-        if (manager.isBound(event.item)) {
+        if (manager.isBoundOrPending(event.item)) {
             event.isCancelled = true
         }
     }
@@ -185,7 +217,14 @@ class ItemLockListener(
         if (shouldBlockForeign(event.player, item, moving = false)) {
             event.isCancelled = true
             deny(event.player, messages().cannotUse)
+            return
         }
+        if (mayEquipByInteract(item)) {
+            plugin.runPlayerNextTick(event.player) {
+                bindEquippedItems(event.player)
+            }
+        }
+        manager.bindPendingOnUse(item, event.player, ItemLockManager.BindAction.INTERACT)
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -196,7 +235,7 @@ class ItemLockListener(
             event.isCancelled = true
             deny(player, messages().cannotUse)
         } else {
-            manager.bindIfEligible(item, player)
+            manager.prepareAutoBindIfEligible(item, player)
         }
     }
 
@@ -208,17 +247,67 @@ class ItemLockListener(
         ) {
             event.isCancelled = true
             deny(player, messages().cannotUse)
+            return
+        }
+        plugin.runPlayerNextTick(player) {
+            bindOffHandArmor(player)
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onDamage(event: EntityDamageByEntityEvent) {
-        val player = event.damager as? Player ?: return
-        val item = player.inventory.itemInMainHand
+        cleanupExpired(lastKillWeapons)
+        val damageWeapon = damageWeapon(event.damager) ?: return
+        val player = damageWeapon.player
+        val item = damageWeapon.item
         if (shouldBlockForeign(player, item, moving = false)) {
             event.isCancelled = true
             deny(player, messages().cannotUse)
+            return
         }
+        manager.prepareAutoBindIfEligible(item, player)
+        val trackingKey = damageWeapon.itemKey ?: manager.trackingKey(item)
+        if (trackingKey != null) {
+            lastKillWeapons[event.entity.uniqueId] = WeaponHit(
+                playerId = player.uniqueId,
+                itemKey = trackingKey,
+                at = System.currentTimeMillis()
+            )
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onShootBow(event: EntityShootBowEvent) {
+        val player = event.entity as? Player ?: return
+        val projectile = event.projectile as? Projectile ?: return
+        val weapon = heldWeaponFor(player, event.bow) ?: return
+        trackProjectileWeapon(projectile, player, weapon)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onProjectileLaunch(event: ProjectileLaunchEvent) {
+        val projectile = event.entity
+        if (projectileWeapons.containsKey(projectile.uniqueId)) {
+            return
+        }
+        val player = projectile.shooter as? Player ?: return
+        val weapon = player.inventory.itemInMainHand
+        if (isAir(weapon)) {
+            return
+        }
+        trackProjectileWeapon(projectile, player, weapon)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onKill(event: EntityDeathEvent) {
+        val player = event.entity.killer ?: return
+        val weapon = trackedKillWeapon(event.entity, player) ?: return
+        manager.bindPendingOnUse(weapon, player, ItemLockManager.BindAction.KILL)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onBlockBreak(event: BlockBreakEvent) {
+        manager.bindPendingOnUse(event.player.inventory.itemInMainHand, event.player, ItemLockManager.BindAction.BLOCK_BREAK)
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -227,19 +316,21 @@ class ItemLockListener(
         if (shouldBlockForeign(event.player, item, moving = false)) {
             event.isCancelled = true
             deny(event.player, messages().cannotUse)
+            return
         }
+        manager.bindPendingOnUse(item, event.player, ItemLockManager.BindAction.INTERACT)
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onClose(event: InventoryCloseEvent) {
         val player = event.player as? Player ?: return
-        manager.scanInventoryForAutoBind(player)
+        manager.scanInventoryForPendingBind(player)
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     fun onJoin(event: PlayerJoinEvent) {
         plugin.runPlayer(event.player) {
-            manager.scanInventoryForAutoBind(event.player)
+            manager.scanInventoryForPendingBind(event.player)
         }
     }
 
@@ -276,7 +367,7 @@ class ItemLockListener(
             deny(player, text.scrollAlreadyBound)
             return false
         }
-        val result = manager.bindItem(target, player)
+        val result = manager.markPendingBind(target, player)
         return when (result) {
             ItemLockManager.OperationResult.SUCCESS -> {
                 manager.play(player, managerConfig().sounds.success)
@@ -284,6 +375,10 @@ class ItemLockListener(
                 true
             }
             ItemLockManager.OperationResult.ALREADY_BOUND -> {
+                deny(player, text.scrollAlreadyBound)
+                false
+            }
+            ItemLockManager.OperationResult.DENIED -> {
                 deny(player, text.scrollAlreadyBound)
                 false
             }
@@ -296,11 +391,26 @@ class ItemLockListener(
 
     private fun tryApplyUnbindScroll(player: Player, target: ItemStack?, text: ItemLockLang.MessageText): Boolean {
         val binding = manager.bindingOf(target)
-        if (binding == null) {
+        val pending = manager.pendingBindingOf(target)
+        if (binding == null && pending == null) {
             deny(player, text.scrollNotBound)
             return false
         }
-        if (managerConfig().unbind.ownerOnlyScroll && binding.ownerUuid != player.uniqueId && !manager.hasBypass(player)) {
+        if (
+            managerConfig().unbind.ownerOnlyScroll &&
+            pending?.ownerUuid != null &&
+            pending.ownerUuid != player.uniqueId &&
+            !manager.hasBypass(player)
+        ) {
+            deny(player, manager.replaceOwner(text.notOwner, pending.ownerName))
+            return false
+        }
+        if (
+            managerConfig().unbind.ownerOnlyScroll &&
+            binding != null &&
+            binding.ownerUuid != player.uniqueId &&
+            !manager.hasBypass(player)
+        ) {
             deny(player, manager.replaceOwner(text.notOwner, binding.ownerName))
             return false
         }
@@ -333,7 +443,7 @@ class ItemLockListener(
         if (!moving && !settings.protection.blockForeignUse) {
             return false
         }
-        return manager.bindingOf(item)?.ownerUuid?.let { it != player.uniqueId } == true
+        return manager.foreignOwnerName(item, player) != null
     }
 
     private fun deny(player: Player, message: String) {
@@ -346,6 +456,136 @@ class ItemLockListener(
         return click == ClickType.DROP || click == ClickType.CONTROL_DROP
     }
 
+    private fun mayEquipArmor(event: InventoryClickEvent): Boolean {
+        if (event.slotType == SlotType.ARMOR) {
+            return true
+        }
+        if (event.click == ClickType.SHIFT_LEFT || event.click == ClickType.SHIFT_RIGHT) {
+            return currentItemCanEquip(event)
+        }
+        if (event.click == ClickType.NUMBER_KEY && event.rawSlot in 5..8) {
+            return true
+        }
+        return event.clickedInventory?.type == InventoryType.PLAYER && event.slot in 36..39
+    }
+
+    private fun mayEquipByInteract(item: ItemStack): Boolean {
+        val name = item.type.name
+        return name.endsWith("_HELMET") ||
+            name.endsWith("_CHESTPLATE") ||
+            name.endsWith("_LEGGINGS") ||
+            name.endsWith("_BOOTS") ||
+            name == "ELYTRA" ||
+            name == "SHIELD"
+    }
+
+    private fun bindEquippedItems(player: Player) {
+        for (item in player.inventory.armorContents) {
+            manager.bindPendingOnUse(item, player, ItemLockManager.BindAction.ARMOR_EQUIP)
+        }
+        manager.bindPendingOnUse(player.inventory.itemInOffHand, player, ItemLockManager.BindAction.ARMOR_EQUIP)
+    }
+
+    private fun bindOffHandArmor(player: Player) {
+        manager.bindPendingOnUse(player.inventory.itemInOffHand, player, ItemLockManager.BindAction.ARMOR_EQUIP)
+    }
+
+    private fun currentItemCanEquip(event: InventoryClickEvent): Boolean {
+        val current = event.currentItem ?: return false
+        if (isAir(current)) {
+            return false
+        }
+        return mayEquipByInteract(current)
+    }
+
+    private fun damageWeapon(entity: Entity): DamageWeapon? {
+        val direct = entity as? Player
+        if (direct != null) {
+            return DamageWeapon(direct, direct.inventory.itemInMainHand, null)
+        }
+
+        val projectile = entity as? Projectile ?: return null
+        val hit = projectileWeapons[projectile.uniqueId]
+        val shooter = projectile.shooter as? Player ?: return null
+        val tracked = hit?.takeIf { it.playerId == shooter.uniqueId && !isExpired(it) }
+        if (tracked != null) {
+            val item = findInventoryItem(shooter, tracked.itemKey) ?: return null
+            return DamageWeapon(shooter, item, tracked.itemKey)
+        }
+        return DamageWeapon(shooter, shooter.inventory.itemInMainHand, null)
+    }
+
+    private fun heldWeaponFor(player: Player, eventWeapon: ItemStack?): ItemStack? {
+        if (eventWeapon == null || isAir(eventWeapon)) {
+            return null
+        }
+        val mainHand = player.inventory.itemInMainHand
+        if (!isAir(mainHand) && mainHand.isSimilar(eventWeapon)) {
+            return mainHand
+        }
+        val offHand = player.inventory.itemInOffHand
+        if (!isAir(offHand) && offHand.isSimilar(eventWeapon)) {
+            return offHand
+        }
+        return eventWeapon
+    }
+
+    private fun trackProjectileWeapon(projectile: Projectile, player: Player, weapon: ItemStack) {
+        cleanupExpired(projectileWeapons)
+        if (shouldBlockForeign(player, weapon, moving = false)) {
+            return
+        }
+        manager.prepareAutoBindIfEligible(weapon, player)
+        val trackingKey = manager.trackingKey(weapon) ?: return
+        projectileWeapons[projectile.uniqueId] = WeaponHit(
+            playerId = player.uniqueId,
+            itemKey = trackingKey,
+            at = System.currentTimeMillis()
+        )
+    }
+
+    private fun trackedKillWeapon(entity: Entity, player: Player): ItemStack? {
+        val hit = lastKillWeapons.remove(entity.uniqueId) ?: return null
+        if (hit.playerId != player.uniqueId) {
+            return null
+        }
+        if (isExpired(hit)) {
+            return null
+        }
+        return findInventoryItem(player, hit.itemKey)
+    }
+
+    private fun isExpired(hit: WeaponHit): Boolean {
+        return System.currentTimeMillis() - hit.at > KILL_WEAPON_TRACK_TTL_MS
+    }
+
+    private fun cleanupExpired(map: ConcurrentHashMap<UUID, WeaponHit>) {
+        val now = System.currentTimeMillis()
+        for ((id, hit) in map) {
+            if (now - hit.at > KILL_WEAPON_TRACK_TTL_MS) {
+                map.remove(id, hit)
+            }
+        }
+    }
+
+    private fun findInventoryItem(player: Player, itemKey: String): ItemStack? {
+        for (item in player.inventory.contents) {
+            if (manager.trackingKey(item) == itemKey) {
+                return item
+            }
+        }
+        for (item in player.inventory.armorContents) {
+            if (manager.trackingKey(item) == itemKey) {
+                return item
+            }
+        }
+        val offHand = player.inventory.itemInOffHand
+        if (manager.trackingKey(offHand) == itemKey) {
+            return offHand
+        }
+        return null
+    }
+
     private fun isAir(item: ItemStack?): Boolean {
         return item == null || item.type == Material.AIR || item.amount <= 0
     }
@@ -353,4 +593,20 @@ class ItemLockListener(
     private fun managerConfig(): ItemLockConfig.Settings = plugin.configService.settings()
 
     private fun messages(): ItemLockLang.MessageText = plugin.langService.text().messages
+
+    private data class WeaponHit(
+        val playerId: UUID,
+        val itemKey: String,
+        val at: Long
+    )
+
+    private data class DamageWeapon(
+        val player: Player,
+        val item: ItemStack,
+        val itemKey: String?
+    )
+
+    private companion object {
+        private const val KILL_WEAPON_TRACK_TTL_MS = 30_000L
+    }
 }

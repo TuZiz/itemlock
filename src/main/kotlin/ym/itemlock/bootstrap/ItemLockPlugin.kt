@@ -1,5 +1,12 @@
-package ym.untitled
+package ym.itemlock.bootstrap
 
+import ym.itemlock.command.ItemLockCommand
+import ym.itemlock.config.ItemLockConfig
+import ym.itemlock.lang.ItemLockLang
+import ym.itemlock.listener.ItemLockListener
+import ym.itemlock.platform.ItemLockScheduler
+import ym.itemlock.service.ItemLockManager
+import ym.itemlock.storage.ItemLockStorage
 import org.bukkit.Bukkit
 import org.bukkit.command.PluginCommand
 import org.bukkit.event.HandlerList
@@ -75,6 +82,10 @@ class ItemLockPlugin : JavaPlugin() {
 
     fun runPlayer(player: org.bukkit.entity.Player, task: () -> Unit) {
         scheduler.runPlayer(player, task)
+    }
+
+    fun runPlayerNextTick(player: org.bukkit.entity.Player, task: () -> Unit) {
+        scheduler.runPlayerNextTick(player, task)
     }
 
     fun runSender(sender: org.bukkit.command.CommandSender, task: () -> Unit) {

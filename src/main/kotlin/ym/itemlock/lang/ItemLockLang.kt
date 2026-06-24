@@ -1,5 +1,7 @@
-package ym.untitled
+package ym.itemlock.lang
 
+import ym.itemlock.bootstrap.ItemLockPlugin
+import ym.itemlock.util.PaperRgb
 import org.bukkit.configuration.file.YamlConfiguration
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -37,7 +39,9 @@ class ItemLockLang(
             val text = Text(
                 binding = BindingText(
                     loreFormat = color(lang, "binding.lore-format"),
-                    loreMarker = color(lang, "binding.lore-marker")
+                    loreMarker = color(lang, "binding.lore-marker"),
+                    pendingLoreFormat = color(lang, "binding.pending-lore-format"),
+                    pendingLoreMarker = color(lang, "binding.pending-lore-marker")
                 ),
                 bindScroll = ScrollText(
                     name = color(lang, "bind-scroll.name"),
@@ -118,13 +122,21 @@ class ItemLockLang(
         companion object {
             fun defaults(): Text {
                 return Text(
-                    binding = BindingText(PaperRgb.color("&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF{player}"), "灵魂绑定"),
+                    binding = BindingText(
+                        PaperRgb.color("&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF{player}"),
+                        "灵魂绑定",
+                        PaperRgb.color("&#BFC7D5◆ &#F8D66D待灵魂绑定 &#6B7280· &#FFFFFF首次使用后绑定主人"),
+                        "待灵魂绑定"
+                    ),
                     bindScroll = ScrollText(
                         PaperRgb.color("&#B58CFF绑定卷轴"),
                         PaperRgb.colorList(
                             listOf(
                                 "&#BFC7D5左键拿起后覆盖到未绑定装备上",
-                                "&#BFC7D5成功后消耗 &#FFFFFF1 &#BFC7D5张并添加灵魂绑定。"
+                                "&#BFC7D5成功后消耗 &#FFFFFF1 &#BFC7D5张并标记为待绑定。",
+                                "",
+                                "&#F8D66D所有物品必须先使用绑定卷轴",
+                                "&#F8D66D目标物品实际使用一次后绑定主人"
                             )
                         )
                     ),
@@ -145,7 +157,9 @@ class ItemLockLang(
 
     data class BindingText(
         val loreFormat: String,
-        val loreMarker: String
+        val loreMarker: String,
+        val pendingLoreFormat: String,
+        val pendingLoreMarker: String
     )
 
     data class ScrollText(
@@ -199,17 +213,17 @@ class ItemLockLang(
                     cannotUse = PaperRgb.color("&#FF6B6B你不能使用其他玩家的灵魂绑定物品。"),
                     cannotTake = PaperRgb.color("&#FF6B6B你不能取走其他玩家的灵魂绑定物品。"),
                     scrollNotBound = PaperRgb.color("&#F8D66D目标物品没有绑定，不会消耗卷轴。"),
-                    scrollAlreadyBound = PaperRgb.color("&#F8D66D目标物品已经绑定，不会消耗卷轴。"),
+                    scrollAlreadyBound = PaperRgb.color("&#F8D66D目标物品已经绑定或等待绑定，不会消耗卷轴。"),
                     scrollDenied = PaperRgb.color("&#FF6B6B该物品不允许使用卷轴解绑。"),
                     scrollSuccess = PaperRgb.color("&#72E06A解绑成功，已消耗 &#FFFFFF1 &#72E06A张解绑卷轴。"),
-                    bindScrollSuccess = PaperRgb.color("&#72E06A绑定成功，已消耗 &#FFFFFF1 &#72E06A张绑定卷轴。"),
+                    bindScrollSuccess = PaperRgb.color("&#72E06A绑定卷轴已生效，实际使用一次后会绑定主人。"),
                     scrollGive = PaperRgb.color("&#72E06A已给予 &#FFFFFF{player} &#72E06Ax{amount} {scroll}。"),
-                    bindScrollLabel = PaperRgb.color("绑定卷轴"),
-                    unbindScrollLabel = PaperRgb.color("解绑卷轴"),
+                    bindScrollLabel = PaperRgb.color("&#B58CFF绑定卷轴"),
+                    unbindScrollLabel = PaperRgb.color("&#7AD7FF解绑卷轴"),
                     reloadStarted = PaperRgb.color("&#BFC7D5正在异步重载 ItemLock 配置与语言..."),
                     reloadDone = PaperRgb.color("&#72E06AItemLock 配置与语言已重载。"),
                     reloadFailed = PaperRgb.color("&#FF6B6B重载失败：&#FFFFFF{error}"),
-                    autoBound = PaperRgb.color("&#BFC7D5该物品已自动灵魂绑定。"),
+                    autoBound = PaperRgb.color("&#BFC7D5绑定卷轴已完成灵魂绑定。"),
                     helpBind = PaperRgb.color("&#66C7FF/{label} bind &#BFC7D5- 绑定手中物品"),
                     helpUnbind = PaperRgb.color("&#66C7FF/{label} unbind &#BFC7D5- 解绑手中物品"),
                     helpScroll = PaperRgb.color("&#66C7FF/{label} scroll [bind|unbind] [数量] [玩家] &#BFC7D5- 获取绑定/解绑卷轴"),

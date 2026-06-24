@@ -1,14 +1,17 @@
 binding:
   lore-format: "&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF{player}"
   lore-marker: "灵魂绑定"
+  pending-lore-format: "&#BFC7D5◆ &#F8D66D待灵魂绑定 &#6B7280· &#FFFFFF首次使用后绑定主人"
+  pending-lore-marker: "待灵魂绑定"
 
 bind-scroll:
   name: "&#B58CFF绑定卷轴"
   lore:
     - "&#BFC7D5左键拿起后覆盖到未绑定装备上"
-    - "&#BFC7D5成功后消耗 &#FFFFFF1 &#BFC7D5张并添加灵魂绑定。"
+    - "&#BFC7D5成功后消耗 &#FFFFFF1 &#BFC7D5张并标记为待绑定。"
     - ""
-    - "&#F8D66D适用于背包内未绑定装备"
+    - "&#F8D66D所有物品必须先使用绑定卷轴"
+    - "&#F8D66D目标物品实际使用一次后绑定主人"
 
 unbind-scroll:
   name: "&#7AD7FF解绑卷轴"
@@ -32,17 +35,17 @@ messages:
   cannot-use: "&#FF6B6B你不能使用其他玩家的灵魂绑定物品。"
   cannot-take: "&#FF6B6B你不能取走其他玩家的灵魂绑定物品。"
   scroll-not-bound: "&#F8D66D目标物品没有绑定，不会消耗卷轴。"
-  scroll-already-bound: "&#F8D66D目标物品已经绑定，不会消耗卷轴。"
+  scroll-already-bound: "&#F8D66D目标物品已经绑定或等待绑定，不会消耗卷轴。"
   scroll-denied: "&#FF6B6B该物品不允许使用卷轴解绑。"
   scroll-success: "&#72E06A解绑成功，已消耗 &#FFFFFF1 &#72E06A张解绑卷轴。"
-  bind-scroll-success: "&#72E06A绑定成功，已消耗 &#FFFFFF1 &#72E06A张绑定卷轴。"
+  bind-scroll-success: "&#72E06A绑定卷轴已生效，实际使用一次后会绑定主人。"
   scroll-give: "&#72E06A已给予 &#FFFFFF{player} &#72E06Ax{amount} {scroll}。"
-  bind-scroll-label: "绑定卷轴"
-  unbind-scroll-label: "解绑卷轴"
+  bind-scroll-label: "&#B58CFF绑定卷轴"
+  unbind-scroll-label: "&#7AD7FF解绑卷轴"
   reload-started: "&#BFC7D5正在异步重载 ItemLock 配置与语言..."
   reload-done: "&#72E06AItemLock 配置与语言已重载。"
   reload-failed: "&#FF6B6B重载失败：&#FFFFFF{error}"
-  auto-bound: "&#BFC7D5该物品已自动灵魂绑定。"
+  auto-bound: "&#BFC7D5绑定卷轴已完成灵魂绑定。"
   help-bind: "&#66C7FF/{label} bind &#BFC7D5- 绑定手中物品"
   help-unbind: "&#66C7FF/{label} unbind &#BFC7D5- 解绑手中物品"
   help-scroll: "&#66C7FF/{label} scroll [bind|unbind] [数量] [玩家] &#BFC7D5- 获取绑定/解绑卷轴"
