@@ -175,7 +175,7 @@ class ItemLockListener(
         while (iterator.hasNext()) {
             val item = iterator.next()
             val binding = manager.bindingOf(item) ?: continue
-            if (binding.ownerUuid != player.uniqueId) {
+            if (!manager.isBindingOwnedBy(binding, player)) {
                 continue
             }
             kept.add(item.clone())
@@ -413,7 +413,7 @@ class ItemLockListener(
         if (
             managerConfig().unbind.ownerOnlyScroll &&
             binding != null &&
-            binding.ownerUuid != player.uniqueId &&
+            !manager.isBindingOwnedBy(binding, player) &&
             !manager.hasBypass(player)
         ) {
             deny(player, manager.replaceOwner(text.notOwner, binding.ownerName))

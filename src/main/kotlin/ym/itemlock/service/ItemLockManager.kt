@@ -7,6 +7,9 @@ import ym.itemlock.config.ItemLockConfig
 import ym.itemlock.lang.ItemLockLang
 import ym.itemlock.model.ScrollType
 import ym.itemlock.storage.ItemLockStorage
+import ym.itemlock.util.PaperRgb
+import org.bukkit.Bukkit
+import org.bukkit.ChatColor
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.Sound
@@ -33,6 +36,8 @@ class ItemLockManager(
     private val keyPendingId = NamespacedKey(plugin, "pending_id")
     private val keyPendingOwnerUuid = NamespacedKey(plugin, "pending_owner_uuid")
     private val keyPendingOwnerName = NamespacedKey(plugin, "pending_owner_name")
+    @Volatile
+    private var loreMatcherCache: LoreMatcherCache? = null
 
     fun bindingOf(item: ItemStack?): BindingInfo? {
         if (isAir(item)) {
@@ -40,22 +45,30 @@ class ItemLockManager(
         }
         val meta = item!!.itemMeta ?: return null
         val container = meta.persistentDataContainer
-        val ownerText = container.get(keyOwnerUuid, PersistentDataType.STRING) ?: return null
-        val ownerUuid = runCatching { UUID.fromString(ownerText) }.getOrNull() ?: return null
-        val itemId = container.get(keyItemId, PersistentDataType.STRING) ?: return null
-        return BindingInfo(
-            itemId = itemId,
-            ownerUuid = ownerUuid,
-            ownerName = container.get(keyOwnerName, PersistentDataType.STRING) ?: "Unknown",
-            boundAt = container.get(keyBoundAt, PersistentDataType.LONG) ?: 0L
-        )
+        val ownerText = container.get(keyOwnerUuid, PersistentDataType.STRING)
+        val ownerUuid = ownerText?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
+        val itemId = container.get(keyItemId, PersistentDataType.STRING)
+        if (ownerUuid != null && itemId != null) {
+            return BindingInfo(
+                itemId = itemId,
+                ownerUuid = ownerUuid,
+                ownerName = container.get(keyOwnerName, PersistentDataType.STRING) ?: "Unknown",
+                boundAt = container.get(keyBoundAt, PersistentDataType.LONG) ?: 0L,
+                source = BindingSource.PDC
+            )
+        }
+        return loreBindingOf(item, meta)
     }
 
     fun isBound(item: ItemStack?): Boolean = bindingOf(item) != null
 
     fun isOwnedBy(item: ItemStack?, player: Player): Boolean {
         val binding = bindingOf(item) ?: return true
-        return binding.ownerUuid == player.uniqueId
+        return isBindingOwnedBy(binding, player)
+    }
+
+    fun isBindingOwnedBy(binding: BindingInfo, player: Player): Boolean {
+        return binding.ownerUuid == player.uniqueId || binding.ownerName.equals(player.name, ignoreCase = true)
     }
 
     fun hasBypass(player: Player): Boolean = player.hasPermission("itemlock.bypass")
@@ -73,8 +86,9 @@ class ItemLockManager(
         val meta = item!!.itemMeta ?: return OperationResult.NO_ITEM
         val container = meta.persistentDataContainer
         clearPendingKeys(container)
-        val itemId = current?.itemId ?: UUID.randomUUID().toString()
-        val boundAt = current?.boundAt?.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val itemId = current?.takeIf { it.source == BindingSource.PDC }?.itemId ?: UUID.randomUUID().toString()
+        val boundAt = current?.takeIf { it.source == BindingSource.PDC }?.boundAt?.takeIf { it > 0L }
+            ?: System.currentTimeMillis()
         container.set(keyItemId, PersistentDataType.STRING, itemId)
         container.set(keyOwnerUuid, PersistentDataType.STRING, owner.uniqueId.toString())
         container.set(keyOwnerName, PersistentDataType.STRING, owner.name)
@@ -169,7 +183,7 @@ class ItemLockManager(
 
     fun foreignOwnerName(item: ItemStack?, player: Player): String? {
         val binding = bindingOf(item)
-        if (binding != null && binding.ownerUuid != player.uniqueId) {
+        if (binding != null && !isBindingOwnedBy(binding, player)) {
             return binding.ownerName
         }
         return null
@@ -213,7 +227,7 @@ class ItemLockManager(
         clearPendingKeys(container)
         meta.lore = removeBindingLore(meta.lore, settings)
         item.itemMeta = meta
-        if (binding != null) {
+        if (binding?.source == BindingSource.PDC) {
             storage.recordUnbind(binding.itemId)
         }
         return OperationResult.SUCCESS
@@ -398,6 +412,73 @@ class ItemLockManager(
         }
     }
 
+    private fun loreBindingOf(item: ItemStack, meta: org.bukkit.inventory.meta.ItemMeta): BindingInfo? {
+        val settings = config.settings().binding
+        if (!settings.detectOwnerLore || settings.ownerLoreFormat.isBlank()) {
+            return null
+        }
+        val lore = meta.lore ?: return null
+        val ownerName = lore.asSequence()
+            .mapNotNull { line -> ownerNameFromLore(line, settings.ownerLoreFormat) }
+            .firstOrNull()
+            ?: return null
+        return BindingInfo(
+            itemId = loreBindingItemId(item.type, ownerName),
+            ownerUuid = ownerUuidFromName(ownerName),
+            ownerName = ownerName,
+            boundAt = 0L,
+            source = BindingSource.LORE
+        )
+    }
+
+    private fun ownerNameFromLore(line: String, format: String): String? {
+        val matcher = loreMatcher(format) ?: return null
+        val coloredMatch = matcher.colored?.matchEntire(line)
+        if (coloredMatch != null) {
+            return normalizeDetectedOwner(coloredMatch.groupValues.getOrNull(1))
+        }
+        val plainLine = ChatColor.stripColor(line) ?: line
+        val plainMatch = matcher.plain?.matchEntire(plainLine)
+        return normalizeDetectedOwner(plainMatch?.groupValues?.getOrNull(1))
+    }
+
+    private fun loreMatcher(format: String): LoreMatcherCache? {
+        loreMatcherCache?.takeIf { it.format == format }?.let { return it }
+        val coloredFormat = PaperRgb.color(format)
+        val built = LoreMatcherCache(
+            format = format,
+            colored = ownerFormatRegex(coloredFormat),
+            plain = ownerFormatRegex(ChatColor.stripColor(coloredFormat) ?: coloredFormat)
+        )
+        loreMatcherCache = built
+        return built.takeIf { it.colored != null || it.plain != null }
+    }
+
+    private fun ownerFormatRegex(format: String): Regex? {
+        val placeholder = Regex("(?i)%player%|\\{player}")
+        val parts = placeholder.split(format, limit = 2)
+        if (parts.size != 2) {
+            return null
+        }
+        return Regex("^${Regex.escape(parts[0])}(.{1,48})${Regex.escape(parts[1])}$")
+    }
+
+    private fun normalizeDetectedOwner(value: String?): String? {
+        val stripped = ChatColor.stripColor(value ?: "") ?: value ?: ""
+        return stripped.trim().takeIf { it.isNotEmpty() }
+    }
+
+    private fun loreBindingItemId(material: Material, ownerName: String): String {
+        val normalizedOwner = ownerName.lowercase(Locale.ROOT)
+        return "lore:${material.name.lowercase(Locale.ROOT)}:$normalizedOwner"
+    }
+
+    private fun ownerUuidFromName(ownerName: String): UUID {
+        Bukkit.getPlayerExact(ownerName)?.let { return it.uniqueId }
+        val key = "ItemLock:lore-owner:${ownerName.lowercase(Locale.ROOT)}"
+        return UUID.nameUUIDFromBytes(key.toByteArray(Charsets.UTF_8))
+    }
+
     private fun matchesType(material: Material, token: String): Boolean {
         val name = material.name.uppercase(Locale.ROOT)
         return when (token) {
@@ -515,7 +596,8 @@ class ItemLockManager(
         val itemId: String,
         val ownerUuid: UUID,
         val ownerName: String,
-        val boundAt: Long
+        val boundAt: Long,
+        val source: BindingSource
     )
 
     data class PendingBindingInfo(
@@ -531,6 +613,17 @@ class ItemLockManager(
         NOT_BOUND,
         DENIED
     }
+
+    enum class BindingSource {
+        PDC,
+        LORE
+    }
+
+    private data class LoreMatcherCache(
+        val format: String,
+        val colored: Regex?,
+        val plain: Regex?
+    )
 
     enum class BindAction {
         BLOCK_BREAK,

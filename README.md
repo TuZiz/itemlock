@@ -86,6 +86,8 @@ mvn clean package
 binding:
   automatic: false
   bind-already-bound-items: false
+  detect-owner-lore: true
+  owner-lore-format: "&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF %player%"
 
 unbind:
   owner-only-scroll: true
@@ -100,6 +102,8 @@ protection:
 
 - `binding.automatic`：是否自动把符合规则的物品标记为待绑定。默认关闭。
 - `binding.bind-already-bound-items`：是否允许覆盖已绑定物品的主人。
+- `binding.detect-owner-lore`：没有插件 PDC 绑定标记时，是否从 lore 中识别绑定所有者。
+- `binding.owner-lore-format`：lore 识别格式，必须包含 `%player%` 作为玩家名占位符。
 - `unbind.owner-only-scroll`：解绑卷轴是否只允许所有者使用。
 - `protection.cancel-drop`：是否禁止丢出真正已绑定的物品。
 - `protection.cancel-hopper-move`：是否禁止漏斗等容器移动已绑定或待绑定物品。

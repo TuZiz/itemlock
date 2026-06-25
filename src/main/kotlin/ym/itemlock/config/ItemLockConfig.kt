@@ -103,6 +103,9 @@ class ItemLockConfig(
                     .ifEmpty { config.getStringList("binding.excluded-materials") }
             ),
             bindAlreadyBoundItems = config.getBoolean("binding.bind-already-bound-items", false),
+            detectOwnerLore = config.getBoolean("binding.detect-owner-lore", true),
+            ownerLoreFormat = config.getString("binding.owner-lore-format", DEFAULT_OWNER_LORE_FORMAT)
+                ?: DEFAULT_OWNER_LORE_FORMAT,
             actionRules = mapOf(
                 ACTION_BLOCK_BREAK to parseBindingRule(bindingConfig, "actions.block-break", DEFAULT_ACTION_RULES.getValue(ACTION_BLOCK_BREAK)),
                 ACTION_ARMOR_EQUIP to parseBindingRule(bindingConfig, "actions.armor-equip", DEFAULT_ACTION_RULES.getValue(ACTION_ARMOR_EQUIP)),
@@ -175,6 +178,8 @@ class ItemLockConfig(
                         explicitMaterials = emptySet(),
                         excludedMaterials = emptySet(),
                         bindAlreadyBoundItems = false,
+                        detectOwnerLore = true,
+                        ownerLoreFormat = DEFAULT_OWNER_LORE_FORMAT,
                         actionRules = DEFAULT_ACTION_RULES
                     ),
                     unbind = UnbindSettings(emptySet(), ownerOnlyScroll = true),
@@ -207,6 +212,8 @@ class ItemLockConfig(
         val explicitMaterials: Set<Material>,
         val excludedMaterials: Set<Material>,
         val bindAlreadyBoundItems: Boolean,
+        val detectOwnerLore: Boolean,
+        val ownerLoreFormat: String,
         val actionRules: Map<String, BindingRule>
     )
 
@@ -245,6 +252,7 @@ class ItemLockConfig(
         const val ACTION_ARMOR_EQUIP = "armor-equip"
         const val ACTION_KILL = "kill"
         const val ACTION_INTERACT = "interact"
+        private const val DEFAULT_OWNER_LORE_FORMAT = "&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF %player%"
 
         private val DEFAULT_ACTION_RULES = mapOf(
             ACTION_BLOCK_BREAK to BindingRule(
@@ -293,6 +301,11 @@ binding:
   excluded-materials: []
   # true 时，管理员重复绑定已绑定物品会覆盖原所有者；false 时保留原绑定。
   bind-already-bound-items: false
+  # true 时，没有插件 PDC 绑定标记的物品会尝试从 lore 中识别绑定所有者。
+  detect-owner-lore: true
+  # 用于从 lore 中识别绑定所有者的格式；必须包含 %player%。
+  # 默认会识别类似: ◆ 灵魂绑定 · 玩家名
+  owner-lore-format: "&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF %player%"
 
 # 解绑规则。
 unbind:

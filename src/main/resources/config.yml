@@ -21,6 +21,11 @@ binding:
   excluded-materials: []
   # true 时，管理员重复绑定已绑定物品会覆盖原所有者；false 时保留原绑定。
   bind-already-bound-items: false
+  # true 时，没有插件 PDC 绑定标记的物品会尝试从 lore 中识别绑定所有者。
+  detect-owner-lore: true
+  # 用于从 lore 中识别绑定所有者的格式；必须包含 %player%。
+  # 默认会识别类似: ◆ 灵魂绑定 · 玩家名
+  owner-lore-format: "&#BFC7D5◆ &#7AD7FF灵魂绑定 &#6B7280· &#FFFFFF %player%"
 
 # 解绑规则。
 unbind:
