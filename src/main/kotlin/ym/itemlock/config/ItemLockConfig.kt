@@ -18,6 +18,7 @@ class ItemLockConfig(
 
     private val settingsRef = AtomicReference(Settings.defaults())
     private val configPath = plugin.dataFolder.toPath().resolve("config.yml")
+    private val bindingPath = plugin.dataFolder.toPath().resolve("binding.yml")
 
     fun settings(): Settings = settingsRef.get()
 
@@ -31,22 +32,24 @@ class ItemLockConfig(
             val config = Files.newBufferedReader(configPath, StandardCharsets.UTF_8).use {
                 YamlConfiguration.loadConfiguration(it)
             }
+            if (Files.notExists(bindingPath)) {
+                val bytes = plugin.getResource("binding.yml")?.use { it.readBytes() }
+                    ?: DEFAULT_BINDING_CONFIG.toByteArray(StandardCharsets.UTF_8)
+                Files.write(bindingPath, bytes)
+            }
+            val bindingConfig = Files.newBufferedReader(bindingPath, StandardCharsets.UTF_8).use {
+                YamlConfiguration.loadConfiguration(it)
+            }
             val explicitRootKeys = config.getKeys(false).toSet()
             val defaults = YamlConfiguration()
             defaults.loadFromString(DEFAULT_CONFIG)
             config.setDefaults(defaults)
+            val bindingDefaults = YamlConfiguration()
+            bindingDefaults.loadFromString(DEFAULT_BINDING_CONFIG)
+            bindingConfig.setDefaults(bindingDefaults)
 
             val settings = Settings(
-                binding = BindingSettings(
-                    automatic = config.getBoolean("binding.automatic", false),
-                    defaultTypes = config.getStringList("binding.default-types")
-                        .map { normalizeToken(it) }
-                        .filter { it.isNotEmpty() }
-                        .toSet(),
-                    explicitMaterials = parseMaterials(config.getStringList("binding.explicit-materials")),
-                    excludedMaterials = parseMaterials(config.getStringList("binding.excluded-materials")),
-                    bindAlreadyBoundItems = config.getBoolean("binding.bind-already-bound-items", false)
-                ),
+                binding = parseBindingSettings(config, bindingConfig),
                 unbind = UnbindSettings(
                     deniedMaterials = parseMaterials(config.getStringList("unbind.denied-materials")),
                     ownerOnlyScroll = config.getBoolean("unbind.owner-only-scroll", true)
@@ -82,6 +85,47 @@ class ItemLockConfig(
             customModelData = config.getInt("$path.custom-model-data", 0),
             matchByDisplay = config.getBoolean("$path.match-by-display", true)
         )
+    }
+
+    private fun parseBindingSettings(config: YamlConfiguration, bindingConfig: YamlConfiguration): BindingSettings {
+        return BindingSettings(
+            automatic = config.getBoolean("binding.automatic", false),
+            defaultTypes = parseTokens(
+                bindingConfig.getStringList("auto-bind.default-types")
+                    .ifEmpty { config.getStringList("binding.default-types") }
+            ),
+            explicitMaterials = parseMaterials(
+                bindingConfig.getStringList("auto-bind.explicit-materials")
+                    .ifEmpty { config.getStringList("binding.explicit-materials") }
+            ),
+            excludedMaterials = parseMaterials(
+                bindingConfig.getStringList("auto-bind.excluded-materials")
+                    .ifEmpty { config.getStringList("binding.excluded-materials") }
+            ),
+            bindAlreadyBoundItems = config.getBoolean("binding.bind-already-bound-items", false),
+            actionRules = mapOf(
+                ACTION_BLOCK_BREAK to parseBindingRule(bindingConfig, "actions.block-break", DEFAULT_ACTION_RULES.getValue(ACTION_BLOCK_BREAK)),
+                ACTION_ARMOR_EQUIP to parseBindingRule(bindingConfig, "actions.armor-equip", DEFAULT_ACTION_RULES.getValue(ACTION_ARMOR_EQUIP)),
+                ACTION_KILL to parseBindingRule(bindingConfig, "actions.kill", DEFAULT_ACTION_RULES.getValue(ACTION_KILL)),
+                ACTION_INTERACT to parseBindingRule(bindingConfig, "actions.interact", DEFAULT_ACTION_RULES.getValue(ACTION_INTERACT))
+            )
+        )
+    }
+
+    private fun parseBindingRule(config: YamlConfiguration, path: String, fallback: BindingRule): BindingRule {
+        val types = parseTokens(config.getStringList("$path.types"))
+        return BindingRule(
+            types = if (types.isEmpty()) fallback.types else types,
+            materials = parseMaterials(config.getStringList("$path.materials")),
+            excludedMaterials = parseMaterials(config.getStringList("$path.excluded-materials"))
+        )
+    }
+
+    private fun parseTokens(names: List<String>): Set<String> {
+        return names
+            .map { normalizeToken(it) }
+            .filter { it.isNotEmpty() }
+            .toSet()
     }
 
     private fun parseMaterials(names: List<String>): Set<Material> {
@@ -130,7 +174,8 @@ class ItemLockConfig(
                         defaultTypes = setOf("WEAPONS", "ARMOR", "TOOLS"),
                         explicitMaterials = emptySet(),
                         excludedMaterials = emptySet(),
-                        bindAlreadyBoundItems = false
+                        bindAlreadyBoundItems = false,
+                        actionRules = DEFAULT_ACTION_RULES
                     ),
                     unbind = UnbindSettings(emptySet(), ownerOnlyScroll = true),
                     bindScroll = ScrollSettings(
@@ -161,7 +206,14 @@ class ItemLockConfig(
         val defaultTypes: Set<String>,
         val explicitMaterials: Set<Material>,
         val excludedMaterials: Set<Material>,
-        val bindAlreadyBoundItems: Boolean
+        val bindAlreadyBoundItems: Boolean,
+        val actionRules: Map<String, BindingRule>
+    )
+
+    data class BindingRule(
+        val types: Set<String>,
+        val materials: Set<Material>,
+        val excludedMaterials: Set<Material>
     )
 
     data class UnbindSettings(
@@ -189,6 +241,34 @@ class ItemLockConfig(
     )
 
     companion object {
+        const val ACTION_BLOCK_BREAK = "block-break"
+        const val ACTION_ARMOR_EQUIP = "armor-equip"
+        const val ACTION_KILL = "kill"
+        const val ACTION_INTERACT = "interact"
+
+        private val DEFAULT_ACTION_RULES = mapOf(
+            ACTION_BLOCK_BREAK to BindingRule(
+                types = setOf("PICKAXES", "AXES", "SHOVELS", "HOES", "SHEARS"),
+                materials = emptySet(),
+                excludedMaterials = emptySet()
+            ),
+            ACTION_ARMOR_EQUIP to BindingRule(
+                types = setOf("ARMOR", "ELYTRA", "SHIELD"),
+                materials = emptySet(),
+                excludedMaterials = emptySet()
+            ),
+            ACTION_KILL to BindingRule(
+                types = setOf("WEAPONS"),
+                materials = emptySet(),
+                excludedMaterials = emptySet()
+            ),
+            ACTION_INTERACT to BindingRule(
+                types = setOf("INTERACT_TOOLS", "MISC_ITEMS"),
+                materials = emptySet(),
+                excludedMaterials = emptySet()
+            )
+        )
+
         private val DEFAULT_CONFIG = """
 # ItemLock 功能配置
 # 所有玩家可见文本请在 lang/zh_cn.yml 中修改；该文件只放功能开关、材料和声音。
@@ -260,6 +340,57 @@ sounds:
   success: ENTITY_PLAYER_LEVELUP
   # 操作失败或被保护阻止时的提示音效。
   failure: BLOCK_NOTE_BLOCK_BASS
+""".trimIndent()
+
+        private val DEFAULT_BINDING_CONFIG = """
+# ItemLock binding behavior rules.
+# This file controls which items finish binding on each action.
+# config.yml still controls global switches, scroll items, protection and sounds.
+
+auto-bind:
+  # Used only when config.yml binding.automatic is true.
+  default-types:
+    - WEAPONS
+    - ARMOR
+    - TOOLS
+  explicit-materials: []
+  excluded-materials: []
+
+actions:
+  # Items bound after breaking a block.
+  block-break:
+    types:
+      - PICKAXES
+      - AXES
+      - SHOVELS
+      - HOES
+      - SHEARS
+    materials: []
+    excluded-materials: []
+
+  # Items bound after they are actually equipped.
+  armor-equip:
+    types:
+      - ARMOR
+      - ELYTRA
+      - SHIELD
+    materials: []
+    excluded-materials: []
+
+  # Items bound after killing an entity.
+  kill:
+    types:
+      - WEAPONS
+    materials: []
+    excluded-materials: []
+
+  # Items bound after direct use, right click, placement or similar interaction.
+  interact:
+    types:
+      - INTERACT_TOOLS
+      - MISC_ITEMS
+    materials: []
+    excluded-materials: []
 """.trimIndent()
     }
 }

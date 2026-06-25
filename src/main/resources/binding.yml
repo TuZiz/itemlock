@@ -1,0 +1,48 @@
+# ItemLock binding behavior rules.
+# This file controls which items finish binding on each action.
+# config.yml still controls global switches, scroll items, protection and sounds.
+
+auto-bind:
+  # Used only when config.yml binding.automatic is true.
+  default-types:
+    - WEAPONS
+    - ARMOR
+    - TOOLS
+  explicit-materials: []
+  excluded-materials: []
+
+actions:
+  # Items bound after breaking a block.
+  block-break:
+    types:
+      - PICKAXES
+      - AXES
+      - SHOVELS
+      - HOES
+      - SHEARS
+    materials: []
+    excluded-materials: []
+
+  # Items bound after they are actually equipped.
+  armor-equip:
+    types:
+      - ARMOR
+      - ELYTRA
+      - SHIELD
+    materials: []
+    excluded-materials: []
+
+  # Items bound after killing an entity.
+  kill:
+    types:
+      - WEAPONS
+    materials: []
+    excluded-materials: []
+
+  # Items bound after direct use, right click, placement or similar interaction.
+  interact:
+    types:
+      - INTERACT_TOOLS
+      - MISC_ITEMS
+    materials: []
+    excluded-materials: []

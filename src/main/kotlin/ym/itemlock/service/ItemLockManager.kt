@@ -172,10 +172,6 @@ class ItemLockManager(
         if (binding != null && binding.ownerUuid != player.uniqueId) {
             return binding.ownerName
         }
-        val pending = pendingBindingOf(item)
-        if (pending?.ownerUuid != null && pending.ownerUuid != player.uniqueId) {
-            return pending.ownerName
-        }
         return null
     }
 
@@ -187,9 +183,6 @@ class ItemLockManager(
             return false
         }
         val pending = pendingBindingOf(item)
-        if (pending?.ownerUuid != null && pending.ownerUuid != owner.uniqueId && !hasBypass(owner)) {
-            return false
-        }
         if (pending == null && !isAutomaticEligibleForAction(item, action)) {
             return false
         }
@@ -227,9 +220,8 @@ class ItemLockManager(
     }
 
     fun prepareAutoBindIfEligible(item: ItemStack?, owner: Player): Boolean {
-        val pending = pendingBindingOf(item)
-        if (pending != null) {
-            return pending.ownerUuid == null && markPendingBind(item, owner) == OperationResult.SUCCESS
+        if (pendingBindingOf(item) != null) {
+            return false
         }
         if (!isEligibleForAutoBind(item)) {
             return false
@@ -363,13 +355,15 @@ class ItemLockManager(
         if (isAir(item)) {
             return false
         }
-        val name = item!!.type.name.uppercase(Locale.ROOT)
-        return when (action) {
-            BindAction.BLOCK_BREAK -> isBlockBreakTool(name)
-            BindAction.ARMOR_EQUIP -> isArmor(name)
-            BindAction.KILL -> isWeapon(name)
-            BindAction.INTERACT -> isInteractTool(name) || isMiscInteractionItem(name)
+        val material = item!!.type
+        val rule = config.settings().binding.actionRules[action.configKey] ?: return false
+        if (material in rule.excludedMaterials) {
+            return false
         }
+        if (material in rule.materials) {
+            return true
+        }
+        return rule.types.any { token -> matchesType(material, token) }
     }
 
     private fun shouldAutoBind(item: ItemStack?, settings: ItemLockConfig.Settings): Boolean {
@@ -383,18 +377,8 @@ class ItemLockManager(
         if (material in settings.binding.explicitMaterials) {
             return true
         }
-        val name = material.name.uppercase(Locale.ROOT)
         return settings.binding.defaultTypes.any { token ->
-            when (token) {
-                "ALL" -> true
-                "WEAPON", "WEAPONS" -> isWeapon(name)
-                "ARMOR", "ARMORS" -> isArmor(name)
-                "TOOL", "TOOLS" -> isTool(name)
-                "SWORD", "SWORDS" -> name.endsWith("_SWORD")
-                "AXE", "AXES" -> name.endsWith("_AXE")
-                "BOW", "BOWS" -> name == "BOW" || name == "CROSSBOW"
-                else -> name == token
-            }
+            matchesType(material, token)
         }
     }
 
@@ -411,6 +395,31 @@ class ItemLockManager(
         return when (type) {
             ScrollType.BIND -> text.bindScroll
             ScrollType.UNBIND -> text.unbindScroll
+        }
+    }
+
+    private fun matchesType(material: Material, token: String): Boolean {
+        val name = material.name.uppercase(Locale.ROOT)
+        return when (token) {
+            "ALL" -> true
+            "WEAPON", "WEAPONS" -> isWeapon(name)
+            "ARMOR", "ARMORS" -> isArmor(name)
+            "TOOL", "TOOLS" -> isTool(name)
+            "INTERACT_TOOL", "INTERACT_TOOLS" -> isInteractTool(name)
+            "MISC", "MISC_ITEM", "MISC_ITEMS" -> isMiscInteractionItem(name)
+            "SWORD", "SWORDS" -> name.endsWith("_SWORD")
+            "PICKAXE", "PICKAXES" -> name.endsWith("_PICKAXE")
+            "AXE", "AXES" -> name.endsWith("_AXE")
+            "SHOVEL", "SHOVELS" -> name.endsWith("_SHOVEL")
+            "HOE", "HOES" -> name.endsWith("_HOE")
+            "BOW", "BOWS" -> name == "BOW" || name == "CROSSBOW"
+            "TRIDENT", "TRIDENTS" -> name == "TRIDENT"
+            "SHEAR", "SHEARS" -> name == "SHEARS"
+            "FISHING_ROD", "FISHING_RODS" -> name == "FISHING_ROD"
+            "FLINT_AND_STEEL" -> name == "FLINT_AND_STEEL"
+            "ELYTRA" -> name == "ELYTRA"
+            "SHIELD", "SHIELDS" -> name == "SHIELD"
+            else -> name == token
         }
     }
 
@@ -527,6 +536,14 @@ class ItemLockManager(
         BLOCK_BREAK,
         ARMOR_EQUIP,
         KILL,
-        INTERACT
+        INTERACT;
+
+        val configKey: String
+            get() = when (this) {
+                BLOCK_BREAK -> ItemLockConfig.ACTION_BLOCK_BREAK
+                ARMOR_EQUIP -> ItemLockConfig.ACTION_ARMOR_EQUIP
+                KILL -> ItemLockConfig.ACTION_KILL
+                INTERACT -> ItemLockConfig.ACTION_INTERACT
+            }
     }
 }

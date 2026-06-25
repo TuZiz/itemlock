@@ -41,28 +41,44 @@ class ItemLockCommand(
                 .filter { it.startsWith(args[0], ignoreCase = true) && canUse(sender, permissionFor(it)) }
                 .toMutableList()
         }
+        if (!args[0].equals("scroll", ignoreCase = true) || !canUse(sender, "itemlock.scroll")) {
+            return mutableListOf()
+        }
         if (args.size == 2 && args[0].equals("scroll", ignoreCase = true)) {
-            return listOf("bind", "unbind", "1", "8", "16", "32", "64")
-                .filter { it.startsWith(args[1], ignoreCase = true) }
-                .toMutableList()
+            return matching(SCROLL_TYPES + SCROLL_AMOUNTS, args[1])
         }
         if (args.size == 3 && args[0].equals("scroll", ignoreCase = true)) {
             val suggestions = if (isScrollType(args[1])) {
-                listOf("1", "8", "16", "32", "64") + Bukkit.getOnlinePlayers().map { it.name }
+                SCROLL_AMOUNTS + onlinePlayerNames()
             } else {
-                Bukkit.getOnlinePlayers().map { it.name }
+                onlinePlayerNames()
             }
-            return suggestions
-                .filter { it.startsWith(args[2], ignoreCase = true) }
-                .toMutableList()
+            return matching(suggestions, args[2])
         }
-        if (args.size == 4 && args[0].equals("scroll", ignoreCase = true) && isScrollType(args[1])) {
-            return Bukkit.getOnlinePlayers()
-                .map { it.name }
-                .filter { it.startsWith(args[3], ignoreCase = true) }
-                .toMutableList()
+        if (
+            args.size == 4 &&
+            args[0].equals("scroll", ignoreCase = true) &&
+            isScrollType(args[1]) &&
+            args[2].toIntOrNull() != null
+        ) {
+            return matching(onlinePlayerNames(), args[3])
         }
         return mutableListOf()
+    }
+
+    private fun matching(values: List<String>, prefix: String): MutableList<String> {
+        return values
+            .filter { it.startsWith(prefix, ignoreCase = true) }
+            .toMutableList()
+    }
+
+    private fun onlinePlayerNames(): List<String> {
+        return Bukkit.getOnlinePlayers().map { it.name }
+    }
+
+    private companion object {
+        val SCROLL_TYPES = listOf("bind", "unbind")
+        val SCROLL_AMOUNTS = listOf("1", "8", "16", "32", "64")
     }
 
     private fun bind(sender: CommandSender) {
@@ -80,9 +96,9 @@ class ItemLockCommand(
             send(sender, messages().noItem)
             return
         }
-        when (manager.bindItem(item, player)) {
-            ItemLockManager.OperationResult.SUCCESS -> send(player, manager.replace(messages().bindSuccess, player))
-            ItemLockManager.OperationResult.ALREADY_BOUND -> send(player, messages().alreadyBound)
+        when (manager.markPendingBind(item)) {
+            ItemLockManager.OperationResult.SUCCESS -> send(player, messages().bindScrollSuccess)
+            ItemLockManager.OperationResult.ALREADY_BOUND -> send(player, messages().scrollAlreadyBound)
             else -> send(player, messages().noItem)
         }
     }

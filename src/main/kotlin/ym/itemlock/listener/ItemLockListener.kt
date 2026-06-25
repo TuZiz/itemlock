@@ -34,6 +34,7 @@ import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.event.player.PlayerRespawnEvent
 import org.bukkit.event.player.PlayerSwapHandItemsEvent
+import org.bukkit.event.player.PlayerArmorStandManipulateEvent
 import org.bukkit.inventory.InventoryView
 import org.bukkit.inventory.ItemStack
 import java.util.UUID
@@ -66,7 +67,7 @@ class ItemLockListener(
         if (!managerConfig().protection.cancelDrop) {
             return
         }
-        if (!manager.isBoundOrPending(event.itemDrop.itemStack)) {
+        if (manager.bindingOf(event.itemDrop.itemStack) == null) {
             return
         }
         event.isCancelled = true
@@ -79,7 +80,7 @@ class ItemLockListener(
         val cursor = event.cursor
         val current = event.currentItem
 
-        if (event.rawSlot == InventoryView.OUTSIDE && manager.isBoundOrPending(cursor)) {
+        if (event.rawSlot == InventoryView.OUTSIDE && manager.bindingOf(cursor) != null) {
             event.isCancelled = true
             deny(player, messages().cannotDrop)
             return
@@ -91,7 +92,7 @@ class ItemLockListener(
             return
         }
 
-        if (isDropClick(event.click) && manager.isBoundOrPending(current)) {
+        if (isDropClick(event.click) && manager.bindingOf(current) != null) {
             event.isCancelled = true
             deny(player, messages().cannotDrop)
             return
@@ -227,6 +228,13 @@ class ItemLockListener(
         manager.bindPendingOnUse(item, event.player, ItemLockManager.BindAction.INTERACT)
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onArmorStandManipulate(event: PlayerArmorStandManipulateEvent) {
+        plugin.runPlayerNextTick(event.player) {
+            bindEquippedItems(event.player)
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onHeld(event: PlayerItemHeldEvent) {
         val player = event.player
@@ -325,12 +333,18 @@ class ItemLockListener(
     fun onClose(event: InventoryCloseEvent) {
         val player = event.player as? Player ?: return
         manager.scanInventoryForPendingBind(player)
+        plugin.runPlayerNextTick(player) {
+            bindEquippedItems(player)
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     fun onJoin(event: PlayerJoinEvent) {
         plugin.runPlayer(event.player) {
             manager.scanInventoryForPendingBind(event.player)
+            plugin.runPlayerNextTick(event.player) {
+                bindEquippedItems(event.player)
+            }
         }
     }
 
@@ -367,7 +381,7 @@ class ItemLockListener(
             deny(player, text.scrollAlreadyBound)
             return false
         }
-        val result = manager.markPendingBind(target, player)
+        val result = manager.markPendingBind(target)
         return when (result) {
             ItemLockManager.OperationResult.SUCCESS -> {
                 manager.play(player, managerConfig().sounds.success)
@@ -394,15 +408,6 @@ class ItemLockListener(
         val pending = manager.pendingBindingOf(target)
         if (binding == null && pending == null) {
             deny(player, text.scrollNotBound)
-            return false
-        }
-        if (
-            managerConfig().unbind.ownerOnlyScroll &&
-            pending?.ownerUuid != null &&
-            pending.ownerUuid != player.uniqueId &&
-            !manager.hasBypass(player)
-        ) {
-            deny(player, manager.replaceOwner(text.notOwner, pending.ownerName))
             return false
         }
         if (
@@ -484,10 +489,12 @@ class ItemLockListener(
             manager.bindPendingOnUse(item, player, ItemLockManager.BindAction.ARMOR_EQUIP)
         }
         manager.bindPendingOnUse(player.inventory.itemInOffHand, player, ItemLockManager.BindAction.ARMOR_EQUIP)
+        player.updateInventory()
     }
 
     private fun bindOffHandArmor(player: Player) {
         manager.bindPendingOnUse(player.inventory.itemInOffHand, player, ItemLockManager.BindAction.ARMOR_EQUIP)
+        player.updateInventory()
     }
 
     private fun currentItemCanEquip(event: InventoryClickEvent): Boolean {
