@@ -343,12 +343,12 @@ sounds:
 """.trimIndent()
 
         private val DEFAULT_BINDING_CONFIG = """
-# ItemLock binding behavior rules.
-# This file controls which items finish binding on each action.
-# config.yml still controls global switches, scroll items, protection and sounds.
+# ItemLock 绑定行为规则。
+# 本文件控制哪些物品会在哪些动作后完成灵魂绑定。
+# config.yml 仍负责全局开关、卷轴物品、保护行为和音效配置。
 
 auto-bind:
-  # Used only when config.yml binding.automatic is true.
+  # 仅在 config.yml 的 binding.automatic 为 true 时用于自动标记待绑定物品。
   default-types:
     - WEAPONS
     - ARMOR
@@ -357,7 +357,7 @@ auto-bind:
   excluded-materials: []
 
 actions:
-  # Items bound after breaking a block.
+  # 破坏方块后完成绑定的物品规则。
   block-break:
     types:
       - PICKAXES
@@ -368,7 +368,7 @@ actions:
     materials: []
     excluded-materials: []
 
-  # Items bound after they are actually equipped.
+  # 实际穿戴到装备槽后完成绑定的物品规则。
   armor-equip:
     types:
       - ARMOR
@@ -377,14 +377,14 @@ actions:
     materials: []
     excluded-materials: []
 
-  # Items bound after killing an entity.
+  # 击杀实体后完成绑定的物品规则。
   kill:
     types:
       - WEAPONS
     materials: []
     excluded-materials: []
 
-  # Items bound after direct use, right click, placement or similar interaction.
+  # 直接使用、右键、放置或类似交互后完成绑定的物品规则。
   interact:
     types:
       - INTERACT_TOOLS
